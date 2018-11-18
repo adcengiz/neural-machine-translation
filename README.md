@@ -25,4 +25,5 @@ pip install spacy && python -m spacy download en
 pip install underthesea
 pip install jieba
 pip install pdb
+pip3 install sacrebleu
 ```
