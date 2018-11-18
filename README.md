@@ -11,3 +11,18 @@ The goal of this project is to build a neural machine translation system and exp
 - Convolutional or self-attention based encoder.
 - Self-attention translation system
 - Multilingual translation system
+
+### Requirements 
+To be able to run the notebooks you should install the following packages:
+- spacy
+- underthesea
+- jieba
+- pdb
+
+All of them can be downloaded using the commands below
+''' 
+pip install spacy && python -m spacy download en
+pip install underthesea
+pip install jieba
+pip install pdb
+'''
