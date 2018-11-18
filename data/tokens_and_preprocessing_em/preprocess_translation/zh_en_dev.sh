@@ -1,4 +1,4 @@
-DATAPATH=/Users/mansimov/Downloads/zh-en
+DATAPATH=/Users/derin/Documents/GitHub/neural-machine-translation/data/tokens_and_preprocessing_em/pretokenized_data/iwslt-zh-en-processed
 
 src=zh
 trg=en
