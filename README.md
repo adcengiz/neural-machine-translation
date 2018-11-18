@@ -18,6 +18,7 @@ To be able to run the notebooks you should install the following packages:
 - underthesea
 - jieba
 - pdb
+- sacrebleu
 
 All of them can be downloaded using the commands below
 ```
