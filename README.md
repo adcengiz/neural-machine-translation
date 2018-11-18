@@ -20,9 +20,9 @@ To be able to run the notebooks you should install the following packages:
 - pdb
 
 All of them can be downloaded using the commands below
-''' 
+```
 pip install spacy && python -m spacy download en
 pip install underthesea
 pip install jieba
 pip install pdb
-'''
+```
