@@ -1,6 +1,6 @@
 # from https://pytorch.org/tutorials/intermediate/seq2seq_translation_tutorial.html
-
-# from https://pytorch.org/tutorials/intermediate/seq2seq_translation_tutorial.html
+# same as 1st model's RNN encoder
+# the different part is the attention decoder in model 2
 
 class RNNencoder(nn.Module):
     def __init__(self,
@@ -8,8 +8,8 @@ class RNNencoder(nn.Module):
                  embedding_size=300,
                  percent_dropout=0.3, 
                  hidden_size=256,
-                 num_gru_layers=4,
-                 max_sentence_len=350):
+                 num_gru_layers=16,
+                 max_sentence_len=15):
         
         super(RNNencoder, self).__init__()
         
@@ -64,18 +64,20 @@ class RNNencoder(nn.Module):
         # (self.num_layers*self.num_directions, batch_size, self.hidden_size)
         # (1, 32, 256)
         # https://pytorch.org/docs/stable/nn.html
-        # print ("self hidden size. = "+str(self.hidden_source.size()))
+#         print ("self hidden size. = "+str(self.hidden_source.size()))
         
         # If batch_first == True, then the input and output tensors are provided as 
         # (batch_size, seq_len, feature)
         # https://pytorch.org/docs/stable/nn.html
-        # print ("seq len source = "+str(seq_len_source))
+#         print ("seq len source = "+str(seq_len_source))
         embeds_source = self.embed_source(source_sentence).view(batch_size, seq_len_source,
                                                                self.embed_size)
         
-        # print ("embeds source size = "+str(embeds_source.size()))
+#         print ("embeds source size = "+str(embeds_source.size()))
         
         embeds_source = source_mask*embeds_source + (1-_source_mask)*embeds_source.clone().detach()
+        
+#         print ("embeds source after mask size = "+str(embeds_source.size()))
         
         embeds_source = torch.nn.utils.rnn.pack_padded_sequence(embeds_source, 
                                                                 source_lengths, 
@@ -83,10 +85,13 @@ class RNNencoder(nn.Module):
         
         gru_out_source, self.hidden_source = self.GRU(embeds_source, self.hidden_source)
         
+#         print ("hidden source size = "+str(self.hidden_source.size()))
+        
+        
         # ref: pytorch documentation
         # hidden source : h_n of shape 
         # (num_layers * num_directions, batch_size, hidden_size)
-        # print ("hidden source size = "+str(self.hidden_source.size()))
+#         print ("hidden source size = "+str(self.hidden_source.size()))
         
         # ref: pytorch documentation
         # Like output, the layers can be separated using 
@@ -94,12 +99,12 @@ class RNNencoder(nn.Module):
         hidden_source = self.hidden_source.view(self.num_layers, self.num_directions, 
                                                 batch_size, self.hidden_size)
         # the following should print (1, 1, 32, 256) for this config
-        # print ("hidden source size after view = "+str(hidden_source.size()))
+#         print ("hidden source size after view = "+str(hidden_source.size()))
         
         # get the mean along 0th axis (over layers)
         hidden_source = torch.mean(hidden_source, dim=0) ## mean instead of sum for source representation as suggested in the class
         # the following should print (1, 32, 256)
-        # print ("hidden source size after mean = "+str(hidden_source.size()))
+#         print ("hidden source size after mean = "+str(hidden_source.size()))
         
         if self.GRU.bidirectional:
             hidden_source = torch.cat([hidden_source[:,i,:] for i in range(self.num_directions)], dim=1)
@@ -119,8 +124,16 @@ class RNNencoder(nn.Module):
         gru_out_source, _ = torch.nn.utils.rnn.pad_packed_sequence(gru_out_source,
                                                                   batch_first=True)
         
+#         ### UNSORT GRU OUT
+#         # get the mean for the GRU output (batch_size, output size, hidden_size)
+#         gru_out_source = torch.mean(gru_out_source, dim=1).view(batch_size, 1, self.hidden_size)
+#         gru_out_source = gru_out_source[unsort_to_original_source]
+# #         print ("gru_out_source size = "+str(gru_out_source.size()))
+        
         source_lengths = source_lengths[unsort_to_original_source]
-
+        
+        # here we return both hidden and out since we will pass both to
+        # the attention decoder
         return hidden_source, source_lengths
 
 
@@ -131,7 +144,7 @@ class RNNdecoder(nn.Module):
                  percent_dropout=0.3, 
                  hidden_size=256,
                  num_gru_layers=1,
-                 max_sentence_len=300):
+                 max_sentence_len=15):
         
         super(RNNdecoder, self).__init__()
         self.vocab_size = vocab_size
@@ -182,7 +195,7 @@ class RNNdecoder(nn.Module):
         # hidden (self.num_layers*self.num_directions, batch_size, self.hidden_size)
         
         self.input = input_
-        print ("self.input size = "+str(self.input.size()))
+#         print ("self.input size = "+str(self.input.size()))
         
         sort_original_target = sorted(range(len(target_lengths)), 
                              key=lambda sentence: -target_lengths[sentence])
@@ -210,7 +223,7 @@ class RNNdecoder(nn.Module):
                                           batch_size, self.hidden_size)
         
         # the following should print (1, 32, 256) for this config
-        print ("self.hidden size = "+str(self.hidden.size()))
+#         print ("self.hidden size = "+str(self.hidden.size()))
         
         self.input = self.input.unsqueeze(1)
         
@@ -222,7 +235,7 @@ class RNNdecoder(nn.Module):
         embeds_target = target_mask[:,time_step,:].unsqueeze(1)*embeds_target + \
                         (1-_target_mask[:,time_step,:].unsqueeze(1))*embeds_target.clone().detach()
 
-        print ("embeds_target size = "+str(embeds_target.size()))    
+#         print ("embeds_target size = "+str(embeds_target.size()))    
         
 #         embeds_target = torch.nn.utils.rnn.pack_padded_sequence(embeds_target,
 #                                                         target_lengths,
@@ -237,7 +250,7 @@ class RNNdecoder(nn.Module):
         # hidden source : h_n of shape 
         # (num_layers * num_directions, batch_size, hidden_size)
         # the following should print (1, 32, 256) for this config
-        print ("hidden size after GRU = "+str(self.hidden.size()))
+#         print ("hidden size after GRU = "+str(self.hidden.size()))
         
         # undo packing 
 #         gru_out_target, _ = torch.nn.utils.rnn.pad_packed_sequence(gru_out_target,
@@ -250,7 +263,7 @@ class RNNdecoder(nn.Module):
                                   batch_size, self.hidden_size)
         hidden = torch.sum(hidden, dim=0) # we don't divide here, just sum
     
-        print ("hidden size = "+str(hidden.size()))
+#         print ("hidden size = "+str(hidden.size()))
         
         if self.GRU.bidirectional:
             # separate layers
@@ -261,7 +274,7 @@ class RNNdecoder(nn.Module):
         else:
             gru_out_target = gru_out_target
         
-        print ("gru out size = "+str(gru_out_target.size()))
+#         print ("gru out size = "+str(gru_out_target.size()))
         
         # sum along sequence
         gru_out_target = torch.sum(gru_out_target, dim=1) # we don't divide here, just sum
@@ -295,126 +308,98 @@ class RNNdecoder(nn.Module):
 
 
 def convert_to_softmax(tensor_of_indices,
-                      vocab_size = len(zhen_en_train_token2id)):
+                       batch_size,
+                       vocab_size = len(zhen_en_train_token2id)):
     """
-    - tensor_of_indices: tensor of size (batch_size)
-    
-    Returns: tensor of size (batch_size x vocab size) that
-             represents the softmax over vocabulary for the true tokens
-             at each timestep for each sentence in the batch."""
-    
-#     inp = torch.LongTensor(1, 32) % 100
-    index_tensor_ = torch.unsqueeze(tensor_of_indices, 2)
-
-    one_hot = torch.FloatTensor(1, 32, vocab_size).zero_()
-    one_hot.scatter_(2, index_tensor_, 1)
+    - takes as input a time_step vector of the batch (t-th token of each sentence in the batch)
+      size: (batch_size, 1)
+    - converts it to softmax of (batch_size, vocab_size)
+    """
+    index_tensor_ = tensor_of_indices.view(-1,1).long()
+        
+    one_hot = torch.FloatTensor(batch_size, vocab_size).zero_()
+    one_hot.scatter_(1, index_tensor_.detach().cpu(), 1)
     
     return one_hot
 
-class Translate(nn.Module):
-    def __init__(self, encoder, decoder):
-        super().__init__()
-        
-        self.encoder = encoder
-        self.decoder = decoder
-        
-    def forward(self, source_sentence, target_sentence, 
-                source_mask, target_mask, source_lengths,
-                target_lengths):
 
-        # to hold previously decoded ys
-        y_outputs = torch.zeros(batch_size, 
-                                target_sentence.size(1), 
-                                len(zhen_en_train_token2id)).to(device)
+# chinese -> english
+enc = RNNencoder(vocab_size=len(zhen_zh_train_token2id), # for chinese
+                 embedding_size=300,
+                 percent_dropout=0.3, 
+                 hidden_size=256,
+                 num_gru_layers=16).to(device)
+
+dec = RNNdecoder(vocab_size=len(zhen_en_train_token2id), # for chinese-english's english
+                 embedding_size=300,
+                 percent_dropout=0.3, 
+                 hidden_size=256,
+                 num_gru_layers=1).to(device)
+
+# model = Translate(enc, dec).to(device)
+
+loss_hist = []
+# train
+
+BATCH_SIZE = 32
+def train(encoder, decoder, loader=zhen_train_loader,
+          optimizer = torch.optim.Adam([*enc.parameters()] + [*dec.parameters()], lr=1e-4),
+#           encoder_optimizer = torch.optim.Adam(enc.parameters(), lr=1e-4),
+#           decoder_optimizer = torch.optim.Adam(dec.parameters(), lr=1e-4),
+          epoch=None):
+    
+#     encoder_optimizer.zero_grad()
+#     decoder_optimizer.zero_grad()
+
+    optimizer.zero_grad()
+    
+    loss = 0
+    
+    for batch_idx, (source_sentence, source_mask, source_lengths, 
+                    target_sentence, target_mask, target_lengths)\
+                    in enumerate(loader):
         
-        #last hidden state of the encoder is the context
-        encoder_hidden, source_lengths = self.encoder(source_sentence,
+        source_sentence, source_mask = source_sentence.to(device), source_mask.to(device) 
+        target_sentence, target_mask = target_sentence.to(device), target_mask.to(device)
+        
+        encoder_hidden, source_lengths = encoder(source_sentence,
                                                source_mask,
                                                source_lengths)
         
-#         print ("context size = "+str(context.size()))
-#         print ("context (hidden source) = "+str(context))
-
-        # context also used as the initial hidden state of the decoder
-        decoder_hidden = encoder_hidden
-
-        # # decoder should start with SOS tokens 
+        decoder_hidden = encoder_hidden.to(device)
+        
+        # decoder should start with SOS tokens 
         # ref: https://pytorch.org/tutorials/intermediate/seq2seq_translation_tutorial.html
-        input_ = SOS_token*torch.ones(batch_size,1).view(-1,1)
-        # print ("input size = "+str(input_.size()))
-#         print ("input = "+str(input))
+        input_ = SOS_token*torch.ones(BATCH_SIZE,1).view(-1,1).to(device)
         
         for t in range(0, target_sentence.size(1)):
             
-            decoder_out, decoder_hidden = self.decoder(decoder_hidden, # = gru_out_source - instead of encoded_source[0]
+            decoder_out, decoder_hidden = decoder(decoder_hidden, # = gru_out_source - instead of encoded_source[0]
                                                  input_, # instead of target sentence up to t 
                                                  target_lengths,  # target lengths
                                                  target_mask,
                                                  t)
             
 #             print ("decoder out size = "+str(decoder_out.size()))
-            for s in range(batch_size):
-                y_outputs[s,t] = decoder_out[s,0]
-#             print ("y_outputs size = "+str(y_outputs.size()))
-#             print ("decoder out = "+str(decoder_out))
-#             print ("decoder out size = "+str(decoder_out.size()))
-#             print ("decoder_out[s,0] = "+str(decoder_out[s,0]))
-
-            token_out = torch.max(decoder_out.view(batch_size,self.decoder.vocab_size),1)[1]
-#             print ("token out size = "+str(token_out.size()))
-#             print ("token out at time step t = "+str(token_out))
-            input_ = token_out.view(-1,1)
+            target_tokens = convert_to_softmax(target_sentence[:,t], BATCH_SIZE)
             
-        return y_outputs
-
-
-BATCH_SIZE = 32
-
-def train(model, loader=zhen_train_loader,criterion=loss_function,
-          optimizer=None, 
-          epoch=None):
-    
-    model.train()
-    
-    epoch_loss = 0
-    
-    for batch_idx, (source_sentence, source_mask, source_lengths, 
-                    target_sentence, target_mask, target_lengths)\
-    in enumerate(loader):
-        
-        source_sentence, source_mask = source_sentence.to(device), source_mask.to(device),  
-        target_sentence, target_mask = target_sentence.to(device), target_mask.to(device),
-        
-        optimizer.zero_grad()
-        
-        # output softmax as generated by decoder 
-        output = model(source_sentence, target_sentence, 
-                source_mask, target_mask, source_lengths,
-                target_lengths)
-        
-        print ("output size = "+str(output.size()))
-        
-        batch_target = torch.zeros(batch_size,model.decoder.embed_size)
-        for i in range(target_sentence.size(0)):
-            one_hot_ = convert_to_softmax(target_sentence[i])
-            batch_target[i] = one_hot_
+            loss += F.binary_cross_entropy(F.sigmoid(decoder_out), target_tokens)
             
-        print ("batch_target[ix] sum = "+str(torch.sum(batch_target[0],1)))
-
-        loss = criterion(out, target)
+        loss_hist.append(loss)
         print ("loss = "+str(loss))
-        
-        loss.backward()
-        
-        torch.nn.utils.clip_grad_norm_(model.parameters(), clip)
+        loss.backward(retain_graph = True)
+        torch.nn.utils.clip_grad_norm_(encoder.parameters(), 50)
+        torch.nn.utils.clip_grad_norm_(decoder.parameters(), 50)
         
         optimizer.step()
         
-        epoch_loss += loss.item()
+    torch.save(encoder.state_dict(), "rnn_encoder_state_dict")
+    torch.save(decoder.state_dict(), "rnn_decoder_state_dict")
+            
+    return loss
         
-    return epoch_loss/BATCH_SIZE
 
-
+    
 num_epochs = 10
 lr = 1e-4
 # batch_
@@ -424,11 +409,10 @@ loss_train = []
 for epoch in range(num_epochs):
     print ("epoch = "+str(epoch))
 
-    loss = train(model,
-                       loader = zhen_train_loader,
-                       optimizer = torch.optim.Adam(model.parameters(), 
-                                                   lr=lr),
-                      epoch = epoch)
+    loss = train(enc, dec,
+                 loader = zhen_train_loader,
+                 optimizer = torch.optim.Adam([*enc.parameters()] + [*dec.parameters()], lr=1e-4),
+                 epoch = epoch)
     
     loss_train.append(loss)
     

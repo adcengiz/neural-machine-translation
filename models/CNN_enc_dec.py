@@ -219,56 +219,95 @@ class RNNdecoder_CNN(nn.Module):
         return pred, hidden
 
 
+# chinese -> english
+enc = CNNencoder(300, # embed size
+                 1024, # hidden size
+                 3, # kernel size
+                 padding = 1,
+                 stride = 2,
+                 percent_dropout = 0.3,
+                 vocab_size = len(zhen_zh_train.index2word),
+                 max_sentence_len=15)
+    
+dec = RNNdecoder_CNN()
+
+# train
+
 BATCH_SIZE = 32
 
-class CNNtranslate(nn.Module):
-    def __init__(self, encoder, decoder):
-        super().__init__()
-        
-        self.encoder = encoder
-        self.decoder = decoder
-        
-    def forward(self, source_sentence, target_sentence, 
-                source_mask, target_mask, source_lengths,
-                target_lengths):
+def train(encoder, decoder, loader=zhen_train_loader,
+          optimizer = torch.optim.Adam([*enc.parameters()] + [*dec.parameters()], lr=1e-4),
+#           encoder_optimizer = torch.optim.Adam(enc.parameters(), lr=1e-4),
+#           decoder_optimizer = torch.optim.Adam(dec.parameters(), lr=1e-4),
+          epoch=None):
+    
+#     encoder_optimizer.zero_grad()
+#     decoder_optimizer.zero_grad()
 
-        # to hold previously decoded ys
-        y_outputs = torch.zeros(batch_size, 
-                                target_sentence.size(1), 
-                                len(zhen_en_train_token2id)).to(device)
+    optimizer.zero_grad()
+    
+    loss = 0
+    
+    for batch_idx, (source_sentence, source_mask, source_lengths, 
+                    target_sentence, target_mask, target_lengths)\
+                    in enumerate(loader):
         
-        #last hidden state of the encoder is the context
-        encoder_hidden = self.encoder(source_sentence)
-
-        # context also used as the initial hidden state of the decoder
+        source_sentence, source_mask = source_sentence.to(device), source_mask.to(device) 
+        target_sentence, target_mask = target_sentence.to(device), target_mask.to(device)
+        
+        encoder_hidden = encoder(source_sentence)
+        
         decoder_hidden = encoder_hidden
-        print ("decoder hidden size = "+str(decoder_hidden.size()))
-
-        # # decoder should start with SOS tokens 
+        
+        # decoder should start with SOS tokens 
         # ref: https://pytorch.org/tutorials/intermediate/seq2seq_translation_tutorial.html
-        input_ = SOS_token*torch.ones(BATCH_SIZE,1).view(-1,1)
-        print ("input size = "+str(input_.size()))
+        input_ = SOS_token*torch.ones(BATCH_SIZE,1).view(-1,1).to(device)
         
         for t in range(0, target_sentence.size(1)):
             
-            decoder_out, decoder_hidden = self.decoder(decoder_hidden, # = gru_out_source - instead of encoded_source[0]
+            decoder_out, decoder_hidden = decoder(decoder_hidden, # = gru_out_source - instead of encoded_source[0]
                                                  input_, # instead of target sentence up to t 
                                                  target_lengths,  # target lengths
                                                  target_mask,
                                                  t)
             
 #             print ("decoder out size = "+str(decoder_out.size()))
-            for s in range(batch_size):
-                y_outputs[s,t] = decoder_out[s,0]
-#             print ("y_outputs size = "+str(y_outputs.size()))
-#             print ("decoder out = "+str(decoder_out))
-#             print ("decoder out size = "+str(decoder_out.size()))
-#             print ("decoder_out[s,0] = "+str(decoder_out[s,0]))
-
-            token_out = torch.max(decoder_out.view(BATCH_SIZE,self.decoder.vocab_size),1)[1]
-#             print ("token out size = "+str(token_out.size()))
-#             print ("token out at time step t = "+str(token_out))
-            input_ = token_out.view(-1,1)
+            target_tokens = convert_to_softmax(target_sentence[:,t], BATCH_SIZE)
             
-        return y_outputs
+            loss += F.binary_cross_entropy(F.sigmoid(decoder_out), target_tokens)
+            
+        print ("loss = "+str(loss))
+        loss.backward(retain_graph = True)
+        torch.nn.utils.clip_grad_norm_(encoder.parameters(), 50)
+        torch.nn.utils.clip_grad_norm_(decoder.parameters(), 50)
+        optimizer.step()
+        
+    torch.save(encoder.state_dict(), "encoder_state_dict")
+    torch.save(decoder.state_dict(), "decoder_state_dict")
+            
+#             epoch_loss.backward(retain_graph = True) # if necessary call retain_graph = True
+            
+            
+#             encoder_optimizer.step()
+#             decoder_optimizer.step()
+            
+    return loss
 
+num_epochs = 10
+lr = 1e-4
+# batch_
+
+loss_train = []
+
+for epoch in range(num_epochs):
+    print ("epoch = "+str(epoch))
+
+    loss = train(enc, dec,
+                 loader = zhen_train_loader,
+                 optimizer = torch.optim.Adam([*enc.parameters()] + [*dec.parameters()], lr=1e-4),
+                 epoch = epoch)
+    
+    loss_train.append(loss)
+    
+    print (loss_train)
+    
