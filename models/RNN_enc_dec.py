@@ -344,12 +344,8 @@ loss_hist = []
 BATCH_SIZE = 32
 def train(encoder, decoder, loader=zhen_train_loader,
           optimizer = torch.optim.Adam([*enc.parameters()] + [*dec.parameters()], lr=1e-4),
-#           encoder_optimizer = torch.optim.Adam(enc.parameters(), lr=1e-4),
-#           decoder_optimizer = torch.optim.Adam(dec.parameters(), lr=1e-4),
-          epoch=None):
-    
-#     encoder_optimizer.zero_grad()
-#     decoder_optimizer.zero_grad()
+          epoch=None, teacher_forcing=False, criterion = torch.nn.NLLLoss()):
+
 
     optimizer.zero_grad()
     
@@ -372,26 +368,77 @@ def train(encoder, decoder, loader=zhen_train_loader,
         # ref: https://pytorch.org/tutorials/intermediate/seq2seq_translation_tutorial.html
         input_ = SOS_token*torch.ones(BATCH_SIZE,1).view(-1,1).to(device)
         
-        for t in range(0, target_sentence.size(1)):
-            
-            decoder_out, decoder_hidden = decoder(decoder_hidden, # = gru_out_source - instead of encoded_source[0]
-                                                 input_, # instead of target sentence up to t 
-                                                 target_lengths,  # target lengths
-                                                 target_mask,
-                                                 t)
-            
-#             print ("decoder out size = "+str(decoder_out.size()))
-            target_tokens = convert_to_softmax(target_sentence[:,t], BATCH_SIZE)
-            
-            loss += F.binary_cross_entropy(F.sigmoid(decoder_out), target_tokens)
-            
-        loss_hist.append(loss)
-        print ("loss = "+str(loss))
-        loss.backward(retain_graph = True)
-        torch.nn.utils.clip_grad_norm_(encoder.parameters(), 50)
-        torch.nn.utils.clip_grad_norm_(decoder.parameters(), 50)
         
-        optimizer.step()
+        if teacher_forcing:
+            
+            decoder_outputs = torch.zeros(BATCH_SIZE, torch.max(torch.from_numpy(target_lengths)), decoder.vocab_size)
+            
+            for t in range(0, target_sentence.size(1)):
+
+                decoder_out, decoder_hidden = decoder(decoder_hidden, # = gru_out_source - instead of encoded_source[0]
+                                                     input_, # instead of target sentence up to t 
+                                                     target_lengths,  # target lengths
+                                                     target_mask,
+                                                     t)
+                
+                decoder_outputs[:,t,:] = decoder_out.view(BATCH_SIZE, decoder.vocab_size)
+            
+                input_ = target_sentence[:,t].view(-1,1)
+               
+            loss_tensor = torch.zeros(BATCH_SIZE, 1)
+            
+            for i in range(BATCH_SIZE):
+                loss_tensor[i] = torch.sum(criterion(decoder_outputs[i], target_sentence[i]))/torch.from_numpy(target_lengths).float()[i]
+                
+                
+            loss = torch.sum(loss_tensor)
+            loss.backward(retain_graph = True)
+#             loss += criterion(F.sigmoid(decoder_out), target_tokens)
+            
+
+            print ("loss = "+str('{0:.16f}'.format(loss)))
+            
+            torch.nn.utils.clip_grad_norm_(encoder.parameters(), 1)
+            torch.nn.utils.clip_grad_norm_(decoder.parameters(), 1)
+
+            optimizer.step()
+            
+        
+        else:
+            
+            decoder_outputs = torch.zeros(BATCH_SIZE, torch.max(torch.from_numpy(target_lengths)), decoder.vocab_size)
+            
+            for t in range(0, target_sentence.size(1)):
+
+                decoder_out, decoder_hidden = decoder(decoder_hidden, # = gru_out_source - instead of encoded_source[0]
+                                                     input_, # instead of target sentence up to t 
+                                                     target_lengths,  # target lengths
+                                                     target_mask,
+                                                     t)
+
+                decoder_outputs[:,t,:] = decoder_out.view(BATCH_SIZE, decoder.vocab_size)
+                input_ = decoder_out.topk(1)[1].view(BATCH_SIZE, 1)
+#                 print ("input_ = "+ str(input_))
+#                 print ("input_ size = "+str(input_.size()))
+
+#                 loss += criterion(F.sigmoid(decoder_out), target_tokens)
+
+            loss_tensor = torch.zeros(BATCH_SIZE, 1)
+    
+            for i in range(BATCH_SIZE):
+                loss_tensor[i] = torch.sum(criterion(decoder_outputs[i], target_sentence[i]))/torch.from_numpy(target_lengths).float()[i]
+                
+            loss = torch.sum(loss_tensor)/BATCH_SIZE
+            loss.backward(retain_graph = True)
+#             loss += criterion(F.sigmoid(decoder_out), target_tokens)
+            
+
+            print ("loss = "+str('{0:.16f}'.format(loss)))
+            
+            torch.nn.utils.clip_grad_norm_(encoder.parameters(), 1)
+            torch.nn.utils.clip_grad_norm_(decoder.parameters(), 1)
+
+            optimizer.step()
         
     torch.save(encoder.state_dict(), "rnn_encoder_state_dict")
     torch.save(decoder.state_dict(), "rnn_decoder_state_dict")
@@ -399,9 +446,8 @@ def train(encoder, decoder, loader=zhen_train_loader,
     return loss
         
 
-    
-num_epochs = 10
-lr = 1e-4
+num_epochs = 150
+lr = 1e-3
 # batch_
 
 loss_train = []
@@ -411,9 +457,9 @@ for epoch in range(num_epochs):
 
     loss = train(enc, dec,
                  loader = zhen_train_loader,
-                 optimizer = torch.optim.Adam([*enc.parameters()] + [*dec.parameters()], lr=1e-4),
-                 epoch = epoch)
+                 optimizer = torch.optim.Adam([*enc.parameters()] + [*dec.parameters()], lr=lr, weight_decay=1e-6),
+                 epoch = epoch, teacher_forcing=True)
     
-    loss_train.append(loss)
+#     loss_train.append(loss)
     
-    print (loss_train)
+#     print (loss_train)
