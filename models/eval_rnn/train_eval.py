@@ -1,3 +1,28 @@
+def out_token_to_string(output_sentence, target_sentence, 
+                        source_lang = "vi"):
+    
+    """Takes as input model output and reference token tensors, and 
+    converts into plain string.
+    
+    :output_sentence: a list of integers, can be obtained by [*batch_tensor.numpy[i]] for an
+                      output tensor of (batch_size, seq_len)
+    :target_setence: a list of integers, can be obtained by [*batch_tensor.numpy[i]] for an
+                      output tensor of (batch_size, seq_len)
+                      
+    :source_lang: 'vi' or 'zh', used to determine the target reference vocab.
+    
+    """
+    
+    if source_lang == "vi":
+        target_vocab = vien_en_train.index2word
+    else:
+        target_vocab = zhen_en_train.index2word
+    
+    output_string = (" ").join([target_vocab[x] for x in [*output_sentence]]) + " "
+    reference_string = (" ").join([target_vocab[x] for x in [*target_sentence]]) + " "
+    
+    return output_string, reference_string
+
 # chinese -> english
 
 # encoder_ = RNNencoder(vocab_size=len(zhen_zh_train_token2id),
