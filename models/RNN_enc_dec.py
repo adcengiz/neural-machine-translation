@@ -2,10 +2,12 @@
 # same as 1st model's RNN encoder
 # the different part is the attention decoder in model 2
 
+# RNNencoder
 class RNNencoder(nn.Module):
-    def __init__(self,
-                 input_size
-                 hidden_size=256,
+    
+    def __init__(self, 
+                 input_size, 
+                 hidden_size, 
                  num_gru_layers=1):
         
         super(RNNencoder, self).__init__()
@@ -13,170 +15,103 @@ class RNNencoder(nn.Module):
         self.input_size = input_size
         self.hidden_size = hidden_size
         self.num_layers = num_gru_layers
-        
-        self.vocab_size = vocab_size
-        self.embed_size = embedding_size
-        self.dropout = percent_dropout
-        self.embed_source = nn.Embedding(self.input_size,
-                                         self.embed_size,
-                                         padding_idx=0
-                                        )
-        
-        self.max_sentence_len = max_sentence_len
-        
-        self.GRU = nn.GRU(self.hidden_size, # instead of embed_size, using only the hidden
-                          self.hidden_size, 
-                          self.num_layers, 
-                          batch_first=True, # always keep True
-                          bidirectional=False)
-        
-        self.drop_out_function = nn.Dropout(0.1)
-        
-    def init_hidden(self, batch_size):
-        
-        hidden_ = torch.zeros(self.num_layers*self.num_directions, 
-                             batch_size, 
-                             self.hidden_size).to(device)
-        return hidden_
 
-    def forward(self, source_sentence, source_lengths, hidden):
+        self.embedding = nn.Embedding(self.input_size, 
+                                      self.hidden_size,
+                                      padding_idx=0)
         
-        sort_original_source = sorted(range(len(source_lengths)), 
-                             key=lambda sentence: -source_lengths[sentence])
-        unsort_to_original_source = sorted(range(len(source_lengths)), 
-                             key=lambda sentence: sort_original_source[sentence])
+        self.GRU = nn.GRU(self.hidden_size, 
+                          self.hidden_size,
+                          batch_first = True,
+                          bidirectional = False)
         
-        source_sentence = source_sentence[sort_original_source]
-        _source_mask = source_mask[sort_original_source]
-        source_lengths = source_lengths[sort_original_source]
-        batch_size, seq_len_source = source_sentence.size()
-        
-        # init hidden
         if self.GRU.bidirectional:
             self.num_directions = 2
         else:
             self.num_directions = 1
         
-        # not initializing hidden inside the encoder, instead we passed this
-        # into the translator encode_decode_rnn
-        # self.hidden_source = self.init_hidden(batch_size)
+    def init_hidden(self, batch_size):
         
-        # If batch_first == True, then the input and output tensors are provided as 
-        # (batch_size, seq_len, feature)
-        # https://pytorch.org/docs/stable/nn.html
-        embeds_source = self.embed_source(source_sentence)
+        return torch.zeros(self.num_layers*self.num_directions, 
+                           batch_size, self.hidden_size).to(device)
 
-        # not using pretrained, no need to mask for unknowns
-        # embeds_source = source_mask*embeds_source + (1-_source_mask)*embeds_source.clone().detach()
+    def forward(self, 
+            `   source_sentence, 
+                source_lengths, 
+                hidden):
         
+        sort_original_source = sorted(range(len(source_lengths)), 
+                               key=lambda sentence: -source_lengths[sentence])
+        unsort_to_original_source = sorted(range(len(source_lengths)), 
+                                    key=lambda sentence: sort_original_source[sentence])
+        
+        source_sentence = source_sentence[sort_original_source]
+        source_lengths = source_lengths[sort_original_source]
+        batch_size, seq_len_source = source_sentence.size()
+        
+        embeds_source = self.embedding(source_sentence)
         
         embeds_source = torch.nn.utils.rnn.pack_padded_sequence(embeds_source, 
                                                                 source_lengths, 
                                                                 batch_first=True)
-
         output = embeds_source
         
         output, hidden = self.GRU(output, hidden)
-
-        # ref: pytorch doc
-        # hidden source : h_n of shape 
-        # (num_layers * num_directions, batch_size, hidden_size)
-        # print ("hidden source size = "+str(self.hidden_source.size()))
         
-        if self.GRU.bidirectional:
-            hidden = torch.cat([hidden[:,i,:] for i in range(self.num_directions)], dim=1)
-            output = output
-        else:
-            hidden = hidden
-            output = output
-            
-        # view before unsort
         hidden = hidden.view(batch_size, self.hidden_size)
         
-        # the following should print (32, 256)
-        # print("hidden source size before unsort = "+str(hidden_source.size()))
-        # UNSORT HIDDEN
         hidden = hidden[unsort_to_original_source] ## back to original indices
-        
         output, _ = torch.nn.utils.rnn.pad_packed_sequence(output, batch_first=True)
         
-        # UNSORT GRU OUT
-        output = output[unsort_to_original_source]
-
+        hidden = hidden.view(1, batch_size, self.hidden_size)
         
-        # here we return both hidden and out since we will pass both to
-        # the attention decoder later
-        return hidden, output
+        return hidden, output[unsort_to_original_source]
 
 
+
+# RNNdecoder
 class RNNdecoder(nn.Module):
-    def __init__(self,
-                 hidden_size=256,
-                 vocab_size=None,
-                 percent_dropout=0.1) # for chinese-english's english):
+    
+    def __init__(self, 
+                 hidden_size, 
+                 vocab_size):
         
         super(RNNdecoder, self).__init__()
-        self.vocab_size = vocab_size
-        # self.embed_size = embedding_size
-        self.dropout = percent_dropout
-        self.drop_out_function = nn.Dropout(self.dropout)
-
+        
         self.hidden_size = hidden_size
+        self.vocab_size = vocab_size
+
+        self.embedding = nn.Embedding(self.vocab_size, 
+                                      self.hidden_size,
+                                      padding_idx=0)
+        
+        
+        self.dropout = nn.Dropout(p=0.1)
         
         self.GRU = nn.GRU(self.hidden_size, 
-                          self.hidden_size, 
-                          1, 
-                          batch_first=True, 
-                          bidirectional=False)
+                          self.hidden_size,
+                          batch_first=True)
         
-        # self.GRUcell = nn.GRUCell(self.embed_size, 
-        #                   self.hidden_size)
-        
-        self.embedding = nn.Embedding(self.vocab_size, self.hidden_size, padding_idx=0)
-        
-        self.sigmoid = nn.Sigmoid()
-        
+
         self.linear_layer = nn.Linear(self.hidden_size, self.vocab_size)
+        
         self.log_softmax = nn.LogSoftmax(dim=1)
-        self.softmax = nn.Softmax(dim=0)
         
     def init_hidden(self, batch_size):
-        hidden = torch.zeros(1, batch_size, self.hidden_size).to(device)
-        return hidden
+        return torch.zeros(1, batch_size, self.hidden_size).to(device)
 
-    def forward(self,
-                input_, # input
-                decoder_hidden): ## decoder_hidden = encoder_hidden at first time_step
+    def forward(self, 
+                input_, 
+                decoder_hidden,
+                encoder_outputs=None):
         
+        # seq_len will always be 1 in the decoder at each time step
         batch_size = input_.size(0)
         output = self.embedding(input_)
-        output = self.drop_out_function(output)
-        # print ("input size = "+str(input.size()))
+        output = self.dropout(output)
         
-        # sort_original_target = sorted(range(len(target_lengths)), 
-        #                      key=lambda sentence: -target_lengths[sentence])
-        # unsort_to_original_target = sorted(range(len(target_lengths)), 
-        #                      key=lambda sentence: sort_original_target[sentence])
-        
-        # seq_len_target is always 1 in the decoder since we are 
-        # passing the tokens for only 1 time_step at a time
-        batch_size, seq_len_target = input_.size()
-        
-        if self.GRU.bidirectional:
-            self.num_directions = 2
-        else:
-            self.num_directions = 1
-        
-        # hidden => initial hidden will be the same as the context
-        # vector, which is the hidden_source tensor
-        # then as we update the hidden state at each time step, this will be 
-        # updated as well
+#         cat_out = torch.cat((output, decoder_hidden), 2)
 
-        # cat_out = torch.cat((output, decoder_hidden), 2)
-        
-        # the following should print (1, 32, 256) for this config
-        # print ("self.hidden size = "+str(self.hidden.size()))
-        
         output, decoder_hidden = self.GRU(output, decoder_hidden)
 
         output = self.linear_layer(output.squeeze(dim=1))
@@ -186,7 +121,7 @@ class RNNdecoder(nn.Module):
         return output, decoder_hidden
 
 
-# model = Translate(enc, dec).to(device)
+# model = rnn_translate(enc, dec).to(device)
 
 
 BATCH_SIZE = 32
@@ -309,173 +244,188 @@ for epoch in range(num_epochs):
                  epoch = epoch, teacher_forcing=True)
 
 
-def encode_decode_rnn(encoder,
-                      decoder,
-                      data_source,
-                      data_target,
-                      source_lengths):
+def translate_rnn(encoder_model,
+                  decoder_model,
+                  source_sentence,
+                  target_sentence,
+                  source_lengths):
     
     use_teacher_forcing = True if random.random() < 0.6 else False
     
-    batch_size = data_source.size(0)
-    encoder_hidden = encoder.init_hidden(batch_size)
+    batch_size = source_sentence.size(0)
+    encoder_hidden = encoder_model.init_hidden(batch_size)
     
-    encoder_hidden, encoder_output = encoder(data_source,
-                                          source_lengths,
-                                          encoder_hidden)
+    encoder_hidden, encoder_output = encoder_model(source_sentence,
+                                                   source_lengths,
+                                                   encoder_hidden)
     
     decoder_hidden = encoder_hidden
     
-    decoder_input = torch.tensor([[SOS_token]]*batch_size).to(device)
+    decoder_input = torch.FloatTensor([[SOS_token]]*batch_size).to(device)
 
     if use_teacher_forcing:
         
-        d_out = []
+        decoder_out = []
          
-        for i in range(MAX_SENTENCE_LENGTH):
+        for time_step in range(MAX_SENTENCE_LENGTH):
             
-            decoder_output, decoder_hidden = decoder(decoder_input,
-                                                     decoder_hidden)
-            d_out.append(decoder_output.unsqueeze(-1))
-            decoder_input = data_target[:,i].view(-1,1)
+            decoder_output, decoder_hidden = decoder_model(decoder_input,
+                                                           decoder_hidden,
+                                                           encoder_outputs=None)
+            decoder_out.append(decoder_output.unsqueeze(-1))
+            decoder_input = target_sentence[:,time_step].view(-1,1)
             
-        d_hidden = decoder_hidden
-        d_out = torch.cat(d_out,dim=-1)
+        decoder_out = torch.cat(decoder_out,
+                                dim=-1)
     else:
-        d_out = []
-        for i in range(MAX_SENTENCE_LENGTH):
-            
-            decoder_output, decoder_hidden = decoder(decoder_input, decoder_hidden)
-            d_out.append(decoder_output.unsqueeze(-1))
-            topv, topi = decoder_output.topk(1)
-            decoder_input = topi.squeeze().detach().view(-1,1)
-            
-        d_hidden = decoder_hidden
-        d_out = torch.cat(d_out,dim=-1)
         
-    return d_out, d_hidden
+        decoder_out = []
+        for time_step in range(MAX_SENTENCE_LENGTH):
+            
+            decoder_output, decoder_hidden = decoder_model(decoder_input,
+                                                           decoder_hidden,
+                                                           encoder_output)
+            
+            decoder_out.append(decoder_output.unsqueeze(-1))
+            top_scores, top_indices = decoder_output.topk(1)
+            decoder_input = top_indices.squeeze().detach().view(-1,1)
+            
+        decoder_out = torch.cat(decoder_out,
+                                dim=-1)
+        
+    return decoder_out, decoder_hidden
 
 
 
 from sacreBLEU.sacreBLEU import corpus_bleu
 
-def validate_model(encoder, decoder, 
+def validate_model(encoder_model, 
+                   decoder_model, 
                    dataloader, 
-                   loss_fun, 
-                   vien_en_): # if source lang == Chinese -> zhen_en_
+                   loss_function, 
+                   en_): # if source lang == Chinese -> zhen_en_, Vietnamese -> vien_en_
     # validation pass - no teacher forcing
     encoder.train(False)
     decoder.train(False)
-    pred_corpus = []
-    true_corpus = []
-    running_loss = 0
-    running_total = 0
 
-    for data in dataloader:
+    model_corpus = []
+    reference_corpus = []
 
-        encoder_i = data[0].to(device) # encoder input - source sentence
-        decoder_i = data[1].to(device) # decoder input - target sentence
-        source_lengths = data[2].to(device)
+    loss_total = 0
+    total = 0
 
-        bs,sl = encoder_i.size()[:2]
-        out, hidden = encode_decode_rnn(encoder,decoder,
-                                        encoder_i,decoder_i, 
-                                        source_lengths)
+    for sentence in dataloader:
 
-        loss = loss_fun(out.float(), decoder_i.long())
-        running_loss += loss.item()*bs
-        running_total += bs
-        pred = torch.max(out,dim = 1)[1]
+        encoder_input = sentence[0].to(device) # encoder input - source sentence
+        decoder_input = sentence[1].to(device) # decoder input - target sentence
+        source_lengths = sentence[2].to(device)
 
-        for t,p in zip(data[1],pred):
-            t,p = out_token_2_string(t,lang_en), out_token_2_string(p,lang_en)
-            true_corpus.append(t)
-            pred_corpus.append(p)
+        batch_size, seq_len = encoder_input.size()[:2]
 
-    score = corpus_bleu(pred_corpus,[true_corpus],lowercase=True)[0]
-    return running_loss/running_total, score
+        out, hidden = rnn_translate(encoder_model,
+                                    decoder_model,
+                                    encoder_input,
+                                    decoder_input,
+                                    source_lengths)
+
+        loss = loss_function(out.float(), decoder_input.long())
+        loss_total += loss.item()*batch_size
+        total = total + batch_size
+        preds = torch.max(out, dim = 1)[1]
+
+        for true, preds in zip(sentence[1], preds):
+
+            true, preds = out_token_2_string(true, en_), out_token_2_string(preds, en_)
+            # model-translated tokens
+            model_corpus.append(preds)
+            # ground truth translation
+            reference_corpus.append(true)
+            
+
+    bleu_score = corpus_bleu((" ").join(pred_corpus),
+                             (" ").join(true_corpus))
+
+    loss = loss_total/total
+
+    return loss, bleu_score
 
 def train_model(encoder_optimizer,
                 decoder_optimizer, 
-                encoder, decoder, 
+                encoder_model, 
+                decoder_model, 
                 dataloader,
                 loss_function, 
-                num_epochs=60):
+                num_epochs=10):
     
-    best_score = 0
-    best_au = 0
-    loss_hist = {"train": [], "val": []}
-    acc_hist = {"train": [], "val": []}
+    loss_hist_dict = {"train": [], "val": []}
 
     for epoch in range(num_epochs):
         print ("epoch", epoch)
 
-        for ex, phase in enumerate(["train"]):
+        for i, mode in enumerate(["train"]):
 
             start = time.time()
             total = 0
             top1_correct = 0
-            running_loss = 0
+            loss_total = 0
             running_total = 0
 
-            if phase == "train":
-                encoder.train(True)
-                decoder.train(True)
+            if mode == "train":
+                encoder_model.train()
+                decoder_model.train()
 
             else:
-                encoder.train(False)
-                decoder.train(False)
+                encoder_model.train(False)
+                decoder_model.train(False)
                 
-            for data in dataloader[phase]:
+            for sentence in dataloader[mode]:
                 
                 encoder_optimizer.zero_grad()
                 decoder_optimizer.zero_grad()
 
-                encoder_i = data[0].to(device)
-                decoder_i = data[1].to(device)
-                source_lengths = data[2].to(device)
+                encoder_input = sentence[0].to(device)
+                decoder_input = sentence[1].to(device)
+                source_lengths = sentence[2].to(device)
                                 
-                out, hidden = encode_decode_rnn(encoder, decoder, 
-                                                encoder_i, decoder_i, 
+                out, hidden = encode_decode_rnn(encoder_model, 
+                                                decoder_model, 
+                                                encoder_input, 
+                                                decoder_input, 
                                                 source_lengths)
                 
-                loss = loss_function(out.float(), decoder_i.long())
+                loss = loss_function(out.float(), decoder_input.long())
 
                 N = decoder_i.size(0)
 
-                running_loss += loss.item() * N
+                loss_total += loss.item() * N
                 
                 total += N
 
-                if phase == "train":
+                if mode == "train":
                     loss.backward()
                     encoder_optimizer.step()
                     decoder_optimizer.step()
                     
-            loss, score = validate_model(encoder, decoder, 
+            loss, score = validate_model(encoder_model, 
+                                         decoder_model, 
                                          dataloader["val"], # vien_loader if lang == vien_en_
                                          loss_function, # nll
                                          vien_en_) # target_language
 
-            print("Validation Loss = ", loss)
-            print("Validation BLEU Score= ", score)
+            print("Validation NLL Loss: ", loss)
+            print("BLEU score on validation set is ", score)
 
-            loss, score = validate_model(encoder, decoder, 
+            loss, score = validate_model(encoder_model, 
+                                         decoder_model, 
                                          dataloader["train"], # vien_loader if lang == vien_en_
                                          loss_function, 
                                          vien_en_) # target_language
-            
-            print("Training Loss = ", loss)
-            print("Traning BLEU Score= ", score)
 
-            epoch_loss = running_loss/total
+            epoch_loss = loss_total/total
             epoch_acc = 0
-            loss_hist[phase].append(epoch_loss)
-            acc_hist[phase].append(epoch_acc)
-            print("Epoch {} {} Loss = {}, Accurancy = {} Time = {}".format(epoch, phase, epoch_loss, epoch_acc,
-                                                                           time.time() - start))
-        if phase == "val" and epoch_acc > best_score:
-            best_score = epoch_acc
+            loss_hist_dict[mode].append(epoch_loss)
 
-    print("Training completed. Best accuracy is {}".format(best_score))
-    return encoder, decoder
+            print("Epoch {} {}, Time = {}".format(epoch, mode, 
+                time.time() - start))
+
+    return encoder_model, decoder_model
